@@ -1,15 +1,13 @@
-/*
-*
-* 标签数据模型
-*
-*/
-
-const mongoose = require('np-mongodb').mongoose;
-const autoIncrement = require('mongoose-auto-increment');
-const mongoosePaginate = require('mongoose-paginate');
-
-// 自增ID初始化
-autoIncrement.initialize(mongoose.connection);
+/**
+ * Tag model module.
+ * @file 标签数据模型
+ * @module model/tag
+ * @author Surmon <https://github.com/surmon-china>
+ */
+ 
+const { mongoose } = require('np-core/np-mongodb')
+const mongoosePaginate = require('mongoose-paginate')
+const autoIncrement = require('mongoose-auto-increment')
 
 // 标签模型
 const tagSchema = new mongoose.Schema({
@@ -30,11 +28,11 @@ const tagSchema = new mongoose.Schema({
 	update_at: { type: Date },
 
 	// 自定义扩展
-	extends: [{ 
+	extends: [{
 		name: { type: String, validate: /\S+/ },
 		value: { type: String, validate: /\S+/ } 
 	}]
-});
+})
 
 // 翻页 + 自增ID插件配置
 tagSchema.plugin(mongoosePaginate)
@@ -43,16 +41,13 @@ tagSchema.plugin(autoIncrement.plugin, {
 	field: 'id',
 	startAt: 1,
 	incrementBy: 1
-});
+})
 
 // 时间更新
 tagSchema.pre('findOneAndUpdate', function(next) {
-	this.findOneAndUpdate({}, { update_at: Date.now() });
-	next();
-});
+	this.findOneAndUpdate({}, { update_at: Date.now() })
+	next()
+})
 
 // 标签模型
-const Tag = mongoose.model('Tag', tagSchema);
-
-// export
-module.exports = Tag;
+module.exports = mongoose.model('Tag', tagSchema)

@@ -1,15 +1,14 @@
-/*
-*
-* 文章数据模型
-*
-*/
+/**
+ * Article model module.
+ * @file 文章数据模型
+ * @module model/article
+ * @author Surmon <https://github.com/surmon-china>
+ */
 
-const mongoose = require('np-mongodb').mongoose;
-const autoIncrement = require('mongoose-auto-increment');
-const mongoosePaginate = require('mongoose-paginate');
-
-// 自增ID初始化
-autoIncrement.initialize(mongoose.connection);
+const { mongoose } = require('np-core/np-mongodb')
+const mongoosePaginate = require('mongoose-paginate')
+const autoIncrement = require('mongoose-auto-increment')
+const { PUBLISH_STATE, PUBLIC_STATE, ORIGIN_STATE } = require('np-core/np-constants')
 
 // 文章模型
 const articleSchema = new mongoose.Schema({
@@ -29,11 +28,14 @@ const articleSchema = new mongoose.Schema({
 	// 缩略图
 	thumb: String,
 
-	// 文章发布状态 => -1回收站，0草稿，1已发布
-	state: { type: Number, default: 1 },
+	// 文章发布状态 => -1 回收站，0 草稿，1 已发布
+	state: { type: Number, default: PUBLISH_STATE.published },
 
-	// 文章公开状态 = // -1私密，0需要密码，1私密
-	public: { type: Number, default: 1 },
+	// 文章公开状态 => -1 私密，0 需要密码，1 公开
+	public: { type: Number, default: PUBLIC_STATE.public },
+
+	// 文章转载状态 => 0 原创，1 转载，2 混合
+	origin: { type: Number, default: ORIGIN_STATE.original },
 
 	// 文章密码 => 加密状态生效
 	password: { type: String, default: '' },
@@ -62,33 +64,30 @@ const articleSchema = new mongoose.Schema({
 		name: { type: String, validate: /\S+/ },
 		value: { type: String, validate: /\S+/ } 
 	}]
-});
+})
 
-articleSchema.set('toObject', { getters: true });
+articleSchema.set('toObject', { getters: true })
 
-// 翻页 + 自增ID插件配置
+// 翻页 + 自增 ID 插件配置
 articleSchema.plugin(mongoosePaginate)
 articleSchema.plugin(autoIncrement.plugin, {
 	model: 'Article',
 	field: 'id',
 	startAt: 1,
 	incrementBy: 1
-});
+})
 
 // 时间更新
 articleSchema.pre('findOneAndUpdate', function(next) {
-	this.findOneAndUpdate({}, { update_at: Date.now() });
-	next();
-});
+	this.findOneAndUpdate({}, { update_at: Date.now() })
+	next()
+})
 
 // 列表时用的文章内容虚拟属性
 articleSchema.virtual('t_content').get(function() {
-	const content = this.content;
-	return !!content ? content.substring(0, 130) : content;
-});
+	const content = this.content
+	return content ? content.substring(0, 130) : content
+})
 
 // 文章模型
-const Article = mongoose.model('Article', articleSchema);
-
-// export
-module.exports = Article;
+module.exports = mongoose.model('Article', articleSchema)

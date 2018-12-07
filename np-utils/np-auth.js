@@ -1,31 +1,36 @@
-/* auth验证方法 */
+/**
+ * Auth module.
+ * @file auth 鉴权
+ * @module utils/auth
+ * @author Surmon <https://github.com/surmon-china>
+ */
 
-const config = require('np-config');
-const jwt = require('jsonwebtoken');
+const jwt = require('jsonwebtoken')
+const CONFIG = require('app.config')
 
-// 验证Auth
+// 验证 Auth
 const authToken = req => {
-	if (req.headers && req.headers.authorization) {
-		const parts = req.headers.authorization.split(' ');
-		if (Object.is(parts.length, 2) && Object.is(parts[0], 'Bearer')) {
-			return parts[1];
-		}
+	if (!req.headers || !req.headers.authorization) {
+		return false
 	}
-	return false;
-};
+	const parts = req.headers.authorization.split(' ')
+	if (parts.length === 2 && parts[0] === 'Bearer') {
+		return parts[1]
+	}
+}
 
 // 验证权限
 const authIsVerified = req => {
-	const token = authToken(req);
+	const token = authToken(req)
 	if (token) {
 		try {
-			const decodedToken = jwt.verify(token, config.AUTH.jwtTokenSecret);
-			if (decodedToken.exp > Math.floor(Date.now() / 1000)) {
-				return true;
-			}
-		} catch (err) {}
+			const decodedToken = jwt.verify(token, CONFIG.AUTH.jwtTokenSecret)
+			return (decodedToken.exp > Math.floor(Date.now() / 1000))
+		} catch (err) {
+			return false
+		}
 	}
-	return false;
-};
+	return false
+}
 
-module.exports = authIsVerified;
+module.exports = authIsVerified

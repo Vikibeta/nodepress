@@ -1,17 +1,29 @@
-const { handleRequest, handleError } = require('np-utils/np-handle');
-const buildSiteMap = require('np-utils/np-sitemap');
-const sitrmapCtrl = {};
+/**
+ * SitrmapCtrl module.
+ * @file 网站地图控制器模块
+ * @module controller/sitrmap
+ * @author Surmon <https://github.com/surmon-china>
+ */
+
+const redis = require('np-core/np-redis')
+const updateAndBuildSiteMap = require('np-utils/np-sitemap')
+const { REDIS_CACHE_FIELDS } = require('np-core/np-constants')
+const { buildController, initController, humanizedHandleError } = require('np-core/np-processor')
+
+// controller
+const SitrmapCtrl = initController()
 
 // 获取地图
-sitrmapCtrl.GET = (req, res) => {
-	buildSiteMap(xml => {
-		res.header('Content-Type', 'application/xml');
-		res.send(xml);
-	}, err => {
-		handleError({ res, err, message: '获取失败' });
-	});
-};
+SitrmapCtrl.GET = (req, res) => {
+	redis.promise({
+		key: REDIS_CACHE_FIELDS.sitemap,
+		promise: updateAndBuildSiteMap
+	})
+	.then(xml => {
+		res.header('Content-Type', 'application/xml')
+		res.send(xml)
+	})
+	.catch(humanizedHandleError(res, '获取地图失败'))
+}
 
-// export
-module.exports = (req, res) => { handleRequest({ req, res, controller: sitrmapCtrl })};
-
+module.exports = buildController(SitrmapCtrl)

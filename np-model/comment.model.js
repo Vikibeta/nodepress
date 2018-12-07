@@ -1,27 +1,26 @@
-/*
-*
-* 评论数据模型
-*
-*/
+/**
+ * Comment model module.
+ * @file 评论数据模型
+ * @module model/comment
+ * @author Surmon <https://github.com/surmon-china>
+ */
 
-const mongoose = require('np-mongodb').mongoose;
-const autoIncrement = require('mongoose-auto-increment');
-const mongoosePaginate = require('mongoose-paginate');
-
-// 自增ID初始化
-autoIncrement.initialize(mongoose.connection);
+const { mongoose } = require('np-core/np-mongodb')
+const mongoosePaginate = require('mongoose-paginate')
+const autoIncrement = require('mongoose-auto-increment')
+const { COMMENT_STATE, COMMENT_PARENT_TYPE } = require('np-core/np-constants')
 
 // 标签模型
 const commentSchema = new mongoose.Schema({
 
-	// 第三方评论id
+	// 第三方评论 ID
 	third_id: { type: Number },
 
-	// 评论所在的文章id，0代表系统留言板
+	// 评论所在的文章 ID，0 代表系统留言板
 	post_id: { type: Number, required: true },
 
-	// pid，0代表默认留言
-	pid: { type: Number, default: 0 },
+	// pid，0 代表默认留言
+	pid: { type: Number, default: COMMENT_PARENT_TYPE.self },
 
 	// content
 	content: { type: String, required: true, validate: /\S+/ },
@@ -42,14 +41,14 @@ const commentSchema = new mongoose.Schema({
 	// IP地址
 	ip: { type: String },
 
-	// ip物理地址
+	// IP物理地址
 	ip_location: { type: Object },
 
-	// 用户ua
+	// 用户UA
 	agent: { type: String, validate: /\S+/ },
 
-	// 状态 0待审核/1通过正常/-1已删除/-2垃圾评论
-	state: { type: Number, default: 1 },
+	// 状态 => 0 待审核 / 1 通过正常 / -1 已删除 / -2 垃圾评论
+	state: { type: Number, default: COMMENT_STATE.published },
 
 	// 发布日期
 	create_at: { type: Date, default: Date.now },
@@ -62,25 +61,22 @@ const commentSchema = new mongoose.Schema({
 		name: { type: String, validate: /\S+/ },
 		value: { type: String, validate: /\S+/ }
 	}]
-});
+})
 
-// 翻页 + 自增ID插件配置
+// 翻页 + 自增 ID 插件配置
 commentSchema.plugin(mongoosePaginate)
 commentSchema.plugin(autoIncrement.plugin, {
 	model: 'Comment',
 	field: 'id',
 	startAt: 1,
 	incrementBy: 1
-});
+})
 
 // 时间更新
 commentSchema.pre('findOneAndUpdate', function(next) {
-	this.findOneAndUpdate({}, { update_at: Date.now() });
-	next();
-});
+	this.findOneAndUpdate({}, { update_at: Date.now() })
+	next()
+})
 
 // 标签模型
-const Comment = mongoose.model('Comment', commentSchema);
-
-// export
-module.exports = Comment;
+module.exports = mongoose.model('Comment', commentSchema)

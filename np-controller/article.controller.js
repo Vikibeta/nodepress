@@ -1,324 +1,320 @@
-/*
- *
- * 文章控制器
- *
+/**
+ * ArticleCtrl module.
+ * @file 文章控制器模块
+ * @module controller/article
+ * @author Surmon <https://github.com/surmon-china>
  */
 
-const { handleRequest, handleError, handleSuccess } = require('np-utils/np-handle');
-const { baiduSeoPush, baiduSeoUpdate, baiduSeoDelete } = require('np-utils/np-baidu-seo-push');
-const Category = require('np-model/category.model');
-const Article = require('np-model/article.model');
-const Tag = require('np-model/tag.model');
-const authIsVerified = require('np-utils/np-auth');
-const buildSiteMap = require('np-utils/np-sitemap');
-const articleCtrl = { list: {}, item: {} };
-const config = require('np-config');
+const CONFIG = require('app.config')
+const redis = require('np-core/np-redis')
+const Tag = require('np-model/tag.model')
+const TagCtrl = require('./tag.controller')
+const Category = require('np-model/category.model')
+const Article = require('np-model/article.model')
+const authIsVerified = require('np-utils/np-auth')
+const updateAndBuildSiteMap = require('np-utils/np-sitemap')
+const { numberIsInvalid, arrayIsInvalid, objectValues } = require('np-helper/np-data-validate')
+const { PUBLISH_STATE, PUBLIC_STATE, ORIGIN_STATE, SORT_TYPE, REDIS_CACHE_FIELDS } = require('np-core/np-constants')
+const { baiduSeoPush, baiduSeoUpdate, baiduSeoDelete } = require('np-utils/np-baidu-seo-push')
+const {
+	handleError,
+	handleSuccess,
+	humanizedHandleError,
+	handlePaginateData,
+	buildController,
+	initController
+} = require('np-core/np-processor')
+
+// controller
+const ArticleCtrl = initController(['list', 'item'])
 
 // 获取文章列表
-articleCtrl.list.GET = (req, res) => {
+ArticleCtrl.list.GET = (req, res) => {
 
-	let { page, per_page, state, public, keyword, category, category_slug, tag, tag_slug, date, hot } = req.query;
+	// 初始参数
+	const { keyword, category, category_slug, tag, tag_slug, date, hot } = req.query
+	const [page, per_page, state, public, origin] = [
+		req.query.page || 1,
+		req.query.per_page,
+		req.query.state,
+		req.query.public,
+		req.query.origin
+	].map(k => Number(k))
 
 	// 过滤条件
 	const options = {
-		sort: { _id: -1 },
-		page: Number(page || 1),
-		limit: Number(per_page || 10),
+		page,
 		populate: ['category', 'tag'],
-		select: '-password -content'
-	};
+		select: '-password -content',
+		sort: { _id: SORT_TYPE.desc }
+	}
+
+	if (!numberIsInvalid(per_page)) {
+		options.limit = per_page
+	}
 
 	// 查询参数
-	let querys = {};
+	const query = {}
 
-	// 按照state查询
-	if (['0', '1', '-1'].includes(state)) {
-		querys.state = state;
-	};
+	// 标签 id 查询
+	if (tag) {
+		query.tag = tag
+	}
 
-	// 按照公开程度查询
-	if (['0', '1', '-1'].includes(public)) {
-		querys.public = public;
-	};
+	// 分类 id 查询
+	if (category) {
+		query.category = category
+	}
+
+	// 热评查询
+	if (hot) {
+		options.sort = {
+			'meta.comments': SORT_TYPE.desc,
+			'meta.likes': SORT_TYPE.desc
+		}
+	}
 
 	// 关键词查询
 	if (keyword) {
-		const keywordReg = new RegExp(keyword);
-		querys['$or'] = [
+		const keywordReg = new RegExp(keyword)
+		query.$or = [
 			{ 'title': keywordReg },
 			{ 'content': keywordReg },
 			{ 'description': keywordReg }
 		]
-	};
-
-	// 标签id查询
-	if (tag) {
-		querys.tag = tag;
-	};
-
-	// 分类id查询
-	if (category) {
-		querys.category = category;
-	};
-
-	// 热评查询
-	if (!!hot) {
-		options.sort = { 
-			'meta.comments': -1,
-			'meta.likes': -1
-		};
-	};
+	}
 
 	// 时间查询
 	if (date) {
-		const getDate = new Date(date);
-		if(!Object.is(getDate.toString(), 'Invalid Date')) {
-			querys.create_at = {
-				"$gte": new Date((getDate / 1000 - 60 * 60 * 8) * 1000),
-				"$lt": new Date((getDate / 1000 + 60 * 60 * 16) * 1000)
-			};
+		const getDate = new Date(date)
+		if (getDate.toString() !== 'Invalid Date') {
+			query.create_at = {
+				$gte: new Date((getDate / 1000 - 60 * 60 * 8) * 1000),
+				$lt: new Date((getDate / 1000 + 60 * 60 * 16) * 1000)
+			}
 		}
-	};
+	}
+
+	// 按照发布状态查询
+	if (objectValues(PUBLISH_STATE).includes(state)) {
+		query.state = state
+	}
+
+	// 按照公开状态查询
+	if (objectValues(PUBLIC_STATE).includes(public)) {
+		query.public = public
+	}
+
+	// 文章来源性质查询
+	if (objectValues(ORIGIN_STATE).includes(origin)) {
+		query.origin = origin
+	}
 
 	// 如果是前台请求，则重置公开状态和发布状态
 	if (!authIsVerified(req)) {
-		querys.state = 1;
-		querys.public = 1;
-	};
+		query.state = PUBLISH_STATE.published
+		query.public = PUBLIC_STATE.public
+	}
 
 	// 请求对应文章
 	const getArticles = () => {
-		Article.paginate(querys, options)
-		.then(articles => {
-			handleSuccess({
-				res,
-				message: '文章列表获取成功',
-				result: {
-					pagination: {
-						total: articles.total,
-						current_page: articles.page,
-						total_page: articles.pages,
-						per_page: articles.limit
-					},
-					data: articles.docs
+		Article.paginate(query, options)
+			.then(articles => {
+				handleSuccess({
+					res,
+					message: '文章列表获取成功',
+					result: handlePaginateData(articles)
+				})
+			})
+			.catch(humanizedHandleError(res, '文章列表获取失败'))
+	}
+
+	// 分类别名查询 - 根据别名查询到 id，然后根据 id 查询
+	if (category_slug) {
+		return Category.find({ slug: category_slug })
+			.then(([category] = []) => {
+				if (category) {
+					query.category = category._id
+					getArticles()
+				} else {
+					handleError({ res, message: '分类不存在' })
 				}
 			})
-		})
-		.catch(err => {
-			handleError({ res, err, message: '文章列表获取失败' });
-		})
-	};
-
-	// 分类别名查询 - 根据别名查询到id，然后根据id查询
-	if (category_slug) {
-		Category.find({ slug: category_slug })
-		.then(([category] = []) => {
-			if (category) {
-				querys.category = category._id;
-				getArticles();
-			} else {
-				handleError({ res, message: '分类不存在' });
-			}
-		})
-		.catch(err => {
-			handleError({ res, err, message: '分类查找失败' });
-		})
-		return false;
-	};
+			.catch(humanizedHandleError(res, '分类查找失败'))
+	}
 	
-	// 标签别名查询 - 根据别名查询到id，然后根据id查询
+	// 标签别名查询 - 根据别名查询到 id，然后根据 id 查询
 	if (tag_slug) {
-		Tag.find({ slug: tag_slug })
-		.then(([tag] = []) => {
-			if (tag) {
-				querys.tag = tag._id;
-				getArticles();
-			} else {
-				handleError({ res, message: '标签不存在' });
-			}
-		})
-		.catch(err => {
-			handleError({ res, err, message: '标签查找失败' });
-		})
-		return false;
-	};
+		return Tag.find({ slug: tag_slug })
+			.then(([tag] = []) => {
+				if (tag) {
+					query.tag = tag._id
+					getArticles()
+				} else {
+					handleError({ res, message: '标签不存在' })
+				}
+			})
+			.catch(humanizedHandleError(res, '标签查找失败'))
+	}
 
 	// 默认请求文章列表
-	getArticles();
-};
+	getArticles()
+}
 
 // 发布文章
-articleCtrl.list.POST = ({ body: article }, res) => {
+ArticleCtrl.list.POST = ({ body: article }, res) => {
 
 	// 验证
 	if (!article.title || !article.content) {
-		handleError({ res, message: '内容不合法' });
-		return false;
-	};
+		return handleError({ res, message: '内容不合法' })
+	}
 
 	// 保存文章
 	new Article(article).save()
-	.then((result = article) => {
-		handleSuccess({ res, result, message: '文章发布成功' });
-		buildSiteMap();
-		baiduSeoPush(`${config.INFO.site}/article/${result.id}`);
-	})
-	.catch(err => {
-		handleError({ res, err, message: '文章发布失败' });
-	})
-};
+		.then((result = article) => {
+			handleSuccess({ res, result, message: '文章发布成功' })
+			TagCtrl.redisTagsCache.update()
+			updateAndBuildSiteMap()
+			baiduSeoPush(`${CONFIG.APP.URL}/article/${result.id}`)
+		})
+		.catch(humanizedHandleError(res, '文章发布失败'))
+}
 
 // 批量修改文章（移回收站、回收站恢复）
-articleCtrl.list.PATCH = ({ body: { articles, action }}, res) => {
+ArticleCtrl.list.PATCH = ({ body: { articles, action }}, res) => {
 
 	// 验证
-	if (!articles || !articles.length) {
-		handleError({ res, message: '缺少有效参数' });
-		return false;
-	};
+	if (arrayIsInvalid(articles)) {
+		return handleError({ res, message: '缺少有效参数' })
+	}
 
 	// 要改的数据
-	let updatePart = {};
+	const actions = {
+		1: PUBLISH_STATE.recycle,
+		2: PUBLISH_STATE.draft,
+		3: PUBLISH_STATE.published
+	}
 
-	switch (action) {
-		// 移至回收站
-		case 1:
-			updatePart.state = -1;
-			break;
-		// 移至草稿
-		case 2:
-			updatePart.state = 0;
-			break;
-		// 移至已发布
-		case 3:
-			updatePart.state = 1;
-			break;
-		default:
-			break;
-	};
+	const doAction = actions[action]
+	const updatePart = objectValues(actions).includes(doAction) ? { state: doAction } : {}
 
-	Article.update({ '_id': { $in: articles }}, { $set: updatePart }, { multi: true })
-	.then(result => {
-		handleSuccess({ res, result, message: '文章批量操作成功' });
-		buildSiteMap();
-	})
-	.catch(err => {
-		handleError({ res, err, message: '文章批量操作失败' });
-	})
-};
+	Article.updateMany({ _id: { $in: articles }}, { $set: updatePart }, { multi: true })
+		.then(result => {
+			handleSuccess({ res, result, message: '文章批量操作成功' })
+			TagCtrl.redisTagsCache.update()
+			updateAndBuildSiteMap()
+		})
+		.catch(humanizedHandleError(res, '文章批量操作失败'))
+}
 
 // 批量删除文章
-articleCtrl.list.DELETE = ({ body: { articles }}, res) => {
+ArticleCtrl.list.DELETE = ({ body: { articles }}, res) => {
 
 	// 验证
-	if (!articles || !articles.length) {
-		handleError({ res, message: '缺少有效参数' });
-		return false;
-	};
+	if (arrayIsInvalid(articles)) {
+		return handleError({ res, message: '缺少有效参数' })
+	}
 
 	// delete action
 	const deleteArticls = () => {
-		Article.remove({ '_id': { $in: articles }})
-		.then(result => {
-			handleSuccess({ res, result, message: '文章批量删除成功' });
-			buildSiteMap();
-		})
-		.catch(err => {
-			handleError({ res, err, message: '文章批量删除失败' });
-		})
-	};
+		Article.deleteMany({ _id: { $in: articles }})
+			.then(result => {
+				handleSuccess({ res, result, message: '文章批量删除成功' })
+				updateAndBuildSiteMap()
+			})
+			.catch(humanizedHandleError(res, '文章批量删除失败'))
+	}
 
 	// baidu-seo-delete
-	Article.find({ '_id': { $in: articles }}, 'id')
-	.then(articles => {
-		if (articles && articles.length) {
-			const urls = articles.map(article => `${config.INFO.site}/article/${article.id}`).join('\n');
-			baiduSeoDelete(urls);
-		}
-		deleteArticls();
-	})
-	.catch(err => {
-		deleteArticls();
-	})
-};
+	Article.find({ _id: { $in: articles }}, 'id')
+		.then(articles => {
+			if (articles && articles.length) {
+				const urls = articles.map(article => `${CONFIG.APP.URL}/article/${article.id}`).join('\n')
+				baiduSeoDelete(urls)
+			}
+			deleteArticls()
+		})
+		.catch(deleteArticls)
+}
 
 // 获取单个文章
-articleCtrl.item.GET = ({ params: { article_id }}, res) => {
+ArticleCtrl.item.GET = ({ params: { article_id }}, res) => {
 
 	// 判断来源
-	const isFindById = Object.is(Number(article_id), NaN);
+	const isFindById = isNaN(Number(article_id))
 
 	// 获取相关文章
 	const getRelatedArticles = result => {
 		Article.find(
-			{ state: 1, public: 1, tag: { $in: result.tag.map(t => t._id) }}, 
-			'id title description thumb -_id', 
+			{ state: PUBLISH_STATE.published, public: PUBLIC_STATE.public, tag: { $in: result.tag.map(t => t._id) }},
+			'id title description thumb -_id',
 			(err, articles) => {
-				result.related = err ? [] : articles;
-				handleSuccess({ res, result, message: '文章获取成功' });
-			})
-	};
+				result.related = err ? [] : articles
+				handleSuccess({ res, result, message: '文章获取成功' })
+			}
+		)
+	}
 
 	(isFindById
 		? Article.findById(article_id)
-		: Article.findOne({ id: article_id, state: 1, public: 1 }).populate('category tag').exec()
+		: Article.findOne({ id: article_id, state: PUBLISH_STATE.published, public: PUBLIC_STATE.public }).populate('category tag').exec()
 	)
 	.then(result => {
+
 		// 每请求一次，浏览次数都要增加
 		if (!isFindById) {
-			result.meta.views += 1;
-			result.save();
+			result.meta.views++
+			result.save()
+			redis.get(REDIS_CACHE_FIELDS.todayViews).then(views => {
+				redis.set(REDIS_CACHE_FIELDS.todayViews, (views || 0) + 1)
+			})
 		}
+
+		// 如果是前台用户请求，则需要获取相关文章
 		if (!isFindById && result.tag.length) {
-			getRelatedArticles(result.toObject());
+			getRelatedArticles(result.toObject())
 		} else {
-			handleSuccess({ res, result, message: '文章获取成功' });
+			handleSuccess({ res, result, message: '文章获取成功' })
 		}
 	})
-	.catch(err => {
-		handleError({ res, err, message: '文章获取失败' });
-	})
-};
+	.catch(humanizedHandleError(res, '文章获取失败', 404))
+}
 
 // 修改单个文章
-articleCtrl.item.PUT = ({ params: { article_id }, body: article }, res) => {
+ArticleCtrl.item.PUT = ({ params: { article_id }, body: article }, res) => {
 
 	// 验证
 	if (!article.title || !article.content) {
-		handleError({ res, message: '内容不合法' });
-		return false;
-	};
+		return handleError({ res, message: '内容不合法' })
+	}
 
 	// 修正信息
-	delete article.meta
-	delete article.create_at
-	delete article.update_at
+	Reflect.deleteProperty(article, 'meta')
+	Reflect.deleteProperty(article, 'create_at')
+	Reflect.deleteProperty(article, 'update_at')
 
 	// 修改文章
 	Article.findByIdAndUpdate(article_id, article, { new: true })
-	.then(result => {
-		handleSuccess({ res, result, message: '文章修改成功' });
-		buildSiteMap();
-		baiduSeoUpdate(`${config.INFO.site}/article/${result.id}`);
-	})
-	.catch(err => {
-		handleError({ res, err, message: '文章修改失败' });
-	})
-};
+		.then(result => {
+			handleSuccess({ res, result, message: '文章修改成功' })
+			TagCtrl.redisTagsCache.update()
+			updateAndBuildSiteMap()
+			baiduSeoUpdate(`${CONFIG.APP.URL}/article/${result.id}`)
+		})
+		.catch(humanizedHandleError(res, '文章修改失败'))
+}
 
 // 删除单个文章
-articleCtrl.item.DELETE = ({ params: { article_id }}, res) => {
+ArticleCtrl.item.DELETE = ({ params: { article_id }}, res) => {
 	Article.findByIdAndRemove(article_id)
-	.then(result => {
-		handleSuccess({ res, result, message: '文章删除成功' });
-		buildSiteMap();
-		baiduSeoDelete(`${config.INFO.site}/article/${result.id}`);
-	})
-	.catch(err => {
-		handleError({ res, err, message: '文章删除失败' });
-	})
-};
+		.then(result => {
+			handleSuccess({ res, result, message: '文章删除成功' })
+			TagCtrl.redisTagsCache.update()
+			updateAndBuildSiteMap()
+			baiduSeoDelete(`${CONFIG.APP.URL}/article/${result.id}`)
+		})
+		.catch(humanizedHandleError(res, '文章删除失败'))
+}
 
-// export
-exports.list = (req, res) => { handleRequest({ req, res, controller: articleCtrl.list })};
-exports.item = (req, res) => { handleRequest({ req, res, controller: articleCtrl.item })};
+exports.list = buildController(ArticleCtrl.list)
+exports.item = buildController(ArticleCtrl.item)

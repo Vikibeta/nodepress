@@ -1,47 +1,84 @@
-/* akismet-spam */
+/**
+ * Akismet spam module.
+ * @file akismet-spam 反垃圾
+ * @module utils/akismet
+ * @author Surmon <https://github.com/surmon-china>
+ */
 
-const config = require('np-config');
-const akismet = require('akismet-api');
-let client = akismet.client({
-	key: config.AKISMET.key,
-	blog: config.AKISMET.blog
-});
-let clientIsValid = false;
+const consola = require('consola')
+const CONFIG = require('app.config')
+const akismet = require('akismet-api')
 
-// 验证key
-client.verifyKey((err, valid) => {
-	if (err) return console.warn('Akismet VerifyKey Error:', err.message);
-	clientIsValid = valid;
-	console.log(`Akismet key ${ valid ? '有效' : '无效' }!`);
-});
+let clientIsValid = false
 
+const client = akismet.client({
+	key: CONFIG.AKISMET.key,
+	blog: CONFIG.AKISMET.blog
+})
+
+// check key
+client.verifyKey().then(valid => {
+	clientIsValid = valid
+	if (valid) {
+		consola.ready(`Akismet key 有效，已准备好工作!`)
+	} else {
+		consola.warn(`Akismet key 无效，无法工作!`)
+	}
+}).catch(err => {
+	consola.warn('Akismet VerifyKey Error:', err.message)
+})
+
+// check spam
+const checkSpam = comment => {
+	consola.info('Akismet 验证评论中...', new Date())
+	return new Promise((resolve, reject) => {
+		if (clientIsValid) {
+			client.checkSpam(comment).then(spam => {
+				if (spam) {
+					consola.warn('Akismet 验证不通过!', new Date())
+					return reject(new Error('spam!'))
+				} else {
+					consola.info('Akismet 验证通过', new Date())
+					return resolve(spam)
+				}
+			}).catch(err => {
+				return resolve(err)
+			})
+		} else {
+			consola.warn('Akismet key 未认证，放弃验证')
+			return resolve('akismet key Invalid!')
+		}
+	})
+}
+
+// submit Interceptor
+const handleCommentInterceptor = handle_type => {
+	return comment => {
+		if (clientIsValid) {
+			consola.info(`Akismet ${handle_type}...`, new Date())
+			client[handle_type](comment).then(result => {
+				consola.info(`Akismet ${handle_type} success!`)
+			}).catch(err => {
+				consola.warn(`Akismet ${handle_type} failed!`, err)
+			})
+		} else {
+			consola.warn('Akismet key Invalid!')
+		}
+	}
+}
+
+// akismet client
 const akismetClient = {
-	checkSpam(options) {
-		console.log('Akismet验证评论中...', new Date());
-		return new Promise((resolve, solve) => {
-			if (clientIsValid) {
-				client.checkSpam(options, (err, spam) => {
-					if (err) {
-						resolve(err);
-						return false;
-					}
-					if (spam) {
-						console.warn('Akismet验证不通过!', new Date());
-						solve(new Error('spam!'));
-					} else {
-						console.log('Akismet验证通过', new Date());
-						resolve(spam);
-					}
-				});
-			} else {
-				console.warn('Akismet key 未认证，放弃验证');
-				resolve('akismet key Invalid!');
-			}
-		})
-	},
-	submitSpam(options, callback) {},
-	submitHam(options, callback) {}
-};
 
-exports.akismet = akismet;
-exports.akismetClient = akismetClient;
+	// check spam
+	checkSpam,
+
+	// submit spam
+	submitSpam: handleCommentInterceptor('submitSpam'),
+
+	// submit ham
+	submitHam: handleCommentInterceptor('submitHam')
+}
+
+exports.akismet = akismet
+exports.akismetClient = akismetClient

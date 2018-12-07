@@ -1,10 +1,11 @@
-/*
-*
-* 设置数据模型
-*
-*/
+/**
+ * Option model module.
+ * @file 设置数据模型
+ * @module model/option
+ * @author Surmon <https://github.com/surmon-china>
+ */
 
-const mongoose = require('np-mongodb').mongoose;
+const { mongoose } = require('np-core/np-mongodb')
 
 const optionSchema = new mongoose.Schema({
 
@@ -29,7 +30,7 @@ const optionSchema = new mongoose.Schema({
 	// 备案号
 	site_icp: String,
 
-	// 搜索引擎ping
+	// 搜索引擎 ping
 	ping_sites: [{ type: String, validate: /\S+/ }],
 
 	// 黑名单
@@ -41,11 +42,10 @@ const optionSchema = new mongoose.Schema({
 
 	// 其他元信息
 	meta: {
-		
+
 		// 被喜欢次数
 		likes: { type: Number, default: 0 }
 	}
-});
+})
 
-const Option = mongoose.model('Option', optionSchema);
-module.exports = Option;
+module.exports = mongoose.model('Option', optionSchema)
